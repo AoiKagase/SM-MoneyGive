@@ -147,6 +147,7 @@ public void OnPluginStart()
 
 	// Bots Action
 	// register_event_ex	("DeathMsg", "bots_action", RegisterEvent_Global);
+	HookEvent("player_death", BotsAction, EventHookMode_Post);
 
 	InitMoneyList();
 }
@@ -202,8 +203,6 @@ InitMoneyList()
 
 public OnClientPutInServer(client)
 {
-	if (IsFakeClient(client))
-	    SDKHook(client, SDKHook_OnTakeDamagePost, BotsAction);
 }
 
 // public client_putinserver(id)
@@ -257,7 +256,7 @@ public Action MG_PlayerMenu(int client, int args)
 	//Start looping through all players
 	for (new i = 1; i <= MaxClients; i++)
 	{
-		if (!IsClientInGame(i))
+		if (!IsValidClient(i))
 			continue;
 
 		//Save a tempid so we do not re-index
@@ -302,7 +301,7 @@ public int MG_PlayerMenuHandler(Menu menu, MenuAction action, int param1, int pa
 			if (found)
 			{
 				int target = StringToInt(info);
-				if (IsClientInGame(target))
+				if (IsValidClient(target))
 					MG_MoneyMenu(param1, target);
 			}
 		}
@@ -316,7 +315,7 @@ public int MG_PlayerMenuHandler(Menu menu, MenuAction action, int param1, int pa
 //====================================================
 // Sub menu.
 //====================================================
-public Action:MG_MoneyMenu(client, player)
+public Action MG_MoneyMenu(client, player)
 {
 	Menu menu = new Menu(MG_MoneyMenuHandler);
 	menu.SetTitle("Choose Money Value.:");
@@ -355,7 +354,7 @@ public int MG_MoneyMenuHandler(Menu menu, MenuAction action, int param1, int par
 			}
 		}
 		case MenuAction_Cancel:
-			if (IsClientInGame(param1))
+			if (IsValidClient(param1))
 				MG_PlayerMenu(param1, 1);
 		case MenuAction_End:
 			delete menu;
@@ -367,7 +366,7 @@ public int MG_MoneyMenuHandler(Menu menu, MenuAction action, int param1, int par
 //====================================================
 // Chat command.
 //====================================================
-public Action:say_mg(int client, int args)
+public Action say_mg(int client, int args)
 {
 	if(!GetConVarInt(g_cvar.CVAR_ENABLE))
 		return Plugin_Continue;
@@ -424,12 +423,12 @@ bool CheckAdmin(client)
 	return true;
 }
 
-stock int GetClientMoney(client)
+int GetClientMoney(client)
 {
 	return GetEntData(client, g_iAccount);
 }
 
-stock void SetClientMoney(client, money)
+void SetClientMoney(client, money)
 {
 	SetEntData(client, g_iAccount, money);
 }
@@ -437,9 +436,10 @@ stock void SetClientMoney(client, money)
 //====================================================
 // Bots Action.
 //====================================================
-public void BotsAction(int victim, int attacker, int inflictor, float damage, int damagetype, int weapon, const float damageForce[3], const float damagePosition[3])
+public void BotsAction(Event event, const char[] name, bool dontBroadcast)
 {
-	if (IsFakeClient(attacker))
+	int attacker = event.GetBool("attacker");
+	if (IsValidClient(attacker) && IsFakeClient(attacker))
 	{	
 		int maxMoney = GetConVarInt(g_cvar.CVAR_MAX_MONEY);
 		int tgtMoney = maxMoney;
@@ -454,12 +454,15 @@ public void BotsAction(int victim, int attacker, int inflictor, float damage, in
 			// get minimun money have player.
 			for (int i = 1; i <= MaxClients; i++)
 			{
-				if (!IsClientInGame(i))
+				if (!IsValidClient(i))
 					continue;
+
 				if (IsFakeClient(i))
 					continue;
+
 				if (GetClientTeam(i) != GetClientTeam(attacker))
 					continue;
+
 				temp = GetClientMoney(i);
 				if (tgtMoney > temp)
 				{
@@ -467,8 +470,8 @@ public void BotsAction(int victim, int attacker, int inflictor, float damage, in
 					target	 = i;
 				}
 			}
-
-			TransferMoney(attacker, target, botGive, true);
+			if (IsValidClient(target))
+				TransferMoney(attacker, target, botGive, true);
 		}
 	}
 }
@@ -486,8 +489,13 @@ CmdMoneyTransfer(int client, char target[MAX_NAME_LENGTH], int money)
 	}
  
 	int player = FindTarget(client, target, false, false);
-	if (player > 0)
+	if (IsValidClient(player))
+	{
+		if (!GetConVarInt(g_cvar.CVAR_ENEMIES))
+			if (GetClientTeam(player) != GetClientTeam(client))
+				return;
 		TransferMoney(client, player, money);
+	}
 
 	return;
 } 
@@ -534,3 +542,22 @@ TransferMoney(from, to, int value, bool fromBot = false)
 
 	return;
 }
+
+bool IsValidClient(client, bool:replaycheck = true)
+{
+	if(client <= 0 || client > MaxClients)
+		return false;
+
+	if(!IsClientInGame(client))
+		return false;
+
+//	if(GetEntProp(client, Prop_Send, "m_bIsCoaching"))
+//		return false;
+
+	if(replaycheck)
+	{
+		if(IsClientSourceTV(client) || IsClientReplay(client)) 
+			return false;
+	}
+	return true;
+} 
