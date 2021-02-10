@@ -67,7 +67,8 @@ public Plugin myinfo =
 // ADMIN LEVEL
 #define ADMIN_ACCESSLEVEL           ADMFLAG_CUSTOM1
 #define MAX_CVAR_LENGTH             64
-
+#define ROUND_DRAW                  9
+#define ROUND_GAME_COMMENCING       15
 //====================================================
 // ENUM AREA
 //====================================================
@@ -95,9 +96,9 @@ char CHAT_CMD[][] = {
 };
 
 ArrayList         gMoneyValues;
-//Handle             g_nv_handle;
 CVARS             gCvars;
-Handle             gCookie;
+Handle            gCookie;
+bool              gCommaning;
 //int             g_money[MAXPLAYERS + 1];
 
 public void OnPluginStart()
@@ -128,8 +129,9 @@ public void OnPluginStart()
     gCvars.StartMoney             = FindConVar("mp_startmoney");    // Start money.
 
     // Bots Action
-    // register_event_ex    ("DeathMsg", "bots_action", RegisterEvent_Global);
-    HookEvent("player_death", BotsAction, EventHookMode_Post);
+    HookEvent("player_death", EvBotsAction);
+    HookEvent("round_end",    EvRoundEnd);
+    HookEvent("player_spawn", EvPlayerSpawn);
 
     gCookie = FindClientCookie("money-give");
     if (gCookie == INVALID_HANDLE)
@@ -388,10 +390,10 @@ void SetClientMoney(int client, int money)
 //====================================================
 // Bots Action.
 //====================================================
-public void BotsAction(Event event, const char[] name, bool dontBroadcast)
+public void EvBotsAction(Event event, const char[] name, bool dontBroadcast)
 {
-    int attacker = event.GetBool("attacker");
-    if (IsValidClient(attacker) && IsFakeClient(attacker))
+    int attacker = GetClientOfUserId(event.GetInt("attacker"));
+    if (IsFakeClient(attacker))
     {    
         int maxMoney = gCvars.MaxMoney.IntValue;
         int tgtMoney = maxMoney;
@@ -426,6 +428,26 @@ public void BotsAction(Event event, const char[] name, bool dontBroadcast)
                 TransferMoney(attacker, target, botGive, true);
         }
     }
+}
+
+public void EvRoundEnd(Event event, const char[] name, bool dontBroadcast)
+{
+	int reasonId = event.GetInt("reason");
+	if (reasonId == ROUND_GAME_COMMENCING || reasonId == ROUND_DRAW)
+		gCommaning = true;
+	else
+		gCommaning = false;
+}
+
+public void EvPlayerSpawn(Event event, const char[] name, bool dontBroadcast)
+{
+	int client = GetClientOfUserId(event.GetInt("userid"));
+	if (gCommaning)
+	{
+        char szMoney[7];
+        GetClientCookie(client, gCookie, szMoney, sizeof(szMoney));
+        SetClientMoney(client, StringToInt(szMoney));
+	}
 }
 
 //====================================================
