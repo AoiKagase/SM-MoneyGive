@@ -571,9 +571,9 @@ void CmdMoneyTransfer(int client, char target[MAX_NAME_LENGTH], int money)
 //====================================================
 void TransferMoney(int from, int to, int value, bool fromBot = false)
 {
-    int mMoney = gCvars.MaxMoney.IntValue;            // MAX
-    int fMoney = GetClientMoney(from);                // From
-    int tMoney = GetClientMoney(to);                // To
+    int mMoney = gCvars.MaxMoney.IntValue; // MAX
+    int fMoney = GetClientMoney(from);     // From
+    int tMoney = GetClientMoney(to);       // To
 
     // don't enough!
     if (!fromBot)
