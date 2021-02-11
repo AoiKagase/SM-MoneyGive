@@ -57,9 +57,9 @@ public Plugin myinfo =
     url         = "https://github.com/AoiKagase"
 };
 
-/*=====================================*/
-/*  MACRO AREA                           */
-/*=====================================*/
+//====================================================
+//  MACRO AREA
+//====================================================
 #define CHAT_TAG                    "[MONEY-GIVE]"
 #define CVAR_TAG                    "sm_mgive"
 #define NVAULT_NAME                 "mgive"
@@ -67,10 +67,14 @@ public Plugin myinfo =
 // ADMIN LEVEL
 #define ADMIN_ACCESSLEVEL           ADMFLAG_CUSTOM1
 #define MAX_CVAR_LENGTH             64
+// ROUND COMMENCING NUMBER
 #define ROUND_DRAW                  9
 #define ROUND_GAME_COMMENCING       15
+// MAX MONEY
+#define MAX_ADDRESS_MATCHES         10
+
 //====================================================
-// ENUM AREA
+// ENUM STRUCT AREA
 //====================================================
 //
 // CVAR SETTINGS
@@ -88,6 +92,9 @@ enum struct CVARS
     ConVar Bank;                    // Bank system.
 }
 
+//====================================================
+// VARIABLE AREA
+//====================================================
 char CHAT_CMD[][] = {
     "/money",
     "/donate",
@@ -99,8 +106,13 @@ ArrayList         gMoneyValues;
 CVARS             gCvars;
 Handle            gCookie;
 bool              gCommaning;
-//int             g_money[MAXPLAYERS + 1];
+Address           gAddAccountAddr;
+Address           gMaxMoney[MAX_ADDRESS_MATCHES] = {Address_Null, ...};
+int               gMaxMoneyMatches = 0;
 
+//====================================================
+// PLUGIN START
+//====================================================
 public void OnPluginStart()
 {
     // CVar settings.
@@ -110,9 +122,12 @@ public void OnPluginStart()
     FormatEx(cvar, sizeof(cvar), "%s%s", CVAR_TAG, "_acs");
     gCvars.AccessLevel            = CreateConVar(cvar, "0");    // 0 = all, 1 = admin
 
-    FormatEx(cvar, sizeof(cvar), "%s%s", CVAR_TAG, "_max");
     if (!(gCvars.MaxMoney         = FindConVar("mp_maxmoney")))
-        gCvars.MaxMoney           = CreateConVar(cvar, "16000");    // Max have money. 
+    {
+        gCvars.MaxMoney           = CreateConVar("mp_maxmoney", "64000");	// Max have money. 
+        HookConVarChange(gCvars.MaxMoney, MaxMoneyChange);
+        MaxMoneyPatch();
+   	}
 
     FormatEx(cvar, sizeof(cvar), "%s%s", CVAR_TAG, "_enemies");
     gCvars.Enemies                = CreateConVar(cvar, "0");    // Enemies in menu. 
@@ -125,8 +140,8 @@ public void OnPluginStart()
     gCvars.MoneyList              = CreateConVar(cvar, "100,500,1000,5000,10000,15000"); 
 
     FormatEx(cvar, sizeof(cvar), "%s%s", CVAR_TAG, "_bank");
-    gCvars.Bank                   = CreateConVar(cvar,"1");    // Bank system.
-    gCvars.StartMoney             = FindConVar("mp_startmoney");    // Start money.
+    gCvars.Bank                   = CreateConVar(cvar,"1");      // Bank system.
+    gCvars.StartMoney             = FindConVar("mp_startmoney"); // Start money.
 
     // Bots Action
     HookEvent("player_death", EvBotsAction);
@@ -138,6 +153,34 @@ public void OnPluginStart()
         gCookie = RegClientCookie("money-give", "Money-Give Bank System.", CookieAccess_Public);
 
     InitMoneyList();
+}
+
+//====================================================
+// INIT MAX MONEY PATCH (for CS:S)
+//====================================================
+void MaxMoneyPatch()
+{
+	Handle gameconf;
+	if((gameconf = LoadGameConfigFile("maxmoney.games")) == INVALID_HANDLE)
+		SetFailState("Failed to load gamedata maxmoney.games.txt");
+	
+	gAddAccountAddr = GameConfGetAddress(gameconf, "AddAccount");
+	
+	if(!gAddAccountAddr)
+		SetFailState("Failed to get AddAccount address");
+	
+	int len = GameConfGetOffset(gameconf, "AddAccountLen");
+	
+	for(int i = 0; i <= len; i++)
+	{
+		if(LoadFromAddress(gAddAccountAddr + view_as<Address>(i), NumberType_Int32) == 16000 && gMaxMoneyMatches < MAX_ADDRESS_MATCHES)
+		{
+			gMaxMoney[gMaxMoneyMatches++] = gAddAccountAddr + view_as<Address>(i);
+		}
+	}
+	PatchMoney();
+	
+	CloseHandle(gameconf);
 }
 
 //====================================================
@@ -160,22 +203,32 @@ void InitMoneyList()
     }    
 }
 
+//====================================================
+// CLIENT PUT IN SERVER
+//====================================================
 public void OnClientPutInServer(int client)
 {
+	// Check Cvar for Bank.
     if (!gCvars.Bank.IntValue)
         return;
 
+	// Check valid client.
     if (!IsValidClient(client))
         return;
 
+	// Check is not bot.
     if (IsFakeClient(client))
         return;
 
+	// Set Money.
     char szMoney[7];
     GetClientCookie(client, gCookie, szMoney, sizeof(szMoney));
     SetClientMoney(client, StringToInt(szMoney));
 }
 
+//====================================================
+// CLIENT DISCONNECT
+//====================================================
 public void OnClientDisconnect(int client)
 {
     if (!gCvars.Bank.IntValue)
@@ -194,10 +247,23 @@ public void OnClientDisconnect(int client)
 }
 
 //====================================================
-// Main menu.
+// PLUGIN END (MONEY PATCH (for CS:S))
+//====================================================
+public void OnPluginEnd()
+{
+	for(int i = 0; i < gMaxMoneyMatches; i++)
+	{
+		StoreToAddress(gMaxMoney[i], 16000, NumberType_Int32);
+		gMaxMoney[i] = Address_Null;
+	}
+}
+
+//====================================================
+// MAIN MENU (Player List).
 //====================================================
 public Action MG_PlayerMenu(int client, int args) 
 {
+	// Check Admin.
     if (!CheckAdmin(client))
         return Plugin_Handled;
 
@@ -269,7 +335,7 @@ public int MG_PlayerMenuHandler(Menu menu, MenuAction action, int param1, int pa
 }
 
 //====================================================
-// Sub menu.
+// SUB MENU (Money List).
 //====================================================
 public Action MG_MoneyMenu(int client, int player)
 {
@@ -324,41 +390,48 @@ public int MG_MoneyMenuHandler(Menu menu, MenuAction action, int param1, int par
 //====================================================
 public Action OnClientSayCommand(int client, const char[] command, const char[] sArgs)
 {
+	// Check Cvar
     if(!gCvars.Enable.IntValue)
         return Plugin_Continue;
 
+	// Check Admin
     if (!CheckAdmin(client))
         return Plugin_Continue;
 
-    char said[32];
+    char cmd[32];
     char target[MAX_NAME_LENGTH];
     char money[7];
 
+	// Separate command/target/money.
     int arg = -1;
-    arg  = BreakString(sArgs, said, sizeof(said));
+    arg  = BreakString(sArgs, cmd, sizeof(cmd));
     if (arg > -1)
     arg += BreakString(sArgs[arg], target, sizeof(target));
     if (arg > -1)
     arg += BreakString(sArgs[arg], money, sizeof(money));
 
+	// Check Command.
     for(int i = 0; i < sizeof(CHAT_CMD); i++)
     {
-        if (strcmp(said, CHAT_CMD[i]) == 0)
+        if (strcmp(cmd, CHAT_CMD[i]) == 0)
         {
             TrimString(target);
             TrimString(money);
+            
+            // No Parameter.
             if (strcmp(target, "") == 0 && strcmp(money, "") == 0)
                 MG_PlayerMenu(client, 1);
             else
                 CmdMoneyTransfer(client, target, StringToInt(money));
+
             return Plugin_Handled;
         }
     }
 
-
-    if (StrContains(said, "give") != -1 
-    ||  StrContains(said, "money")!= -1
-    ||  StrContains(said, "mg")   != -1)
+	// Neer command.
+    if (StrContains(cmd, "give") != -1 
+    ||  StrContains(cmd, "money")!= -1
+    ||  StrContains(cmd, "mg")   != -1)
     {
         PrintToChat(client, "\4%s \1/mg or /mgive is show money give menu", CHAT_TAG);
         return Plugin_Handled;
@@ -367,7 +440,7 @@ public Action OnClientSayCommand(int client, const char[] command, const char[] 
 }
 
 //====================================================
-// Check Logic.
+// Check Admin.
 //====================================================
 bool CheckAdmin(int client)
 {
@@ -377,22 +450,26 @@ bool CheckAdmin(int client)
     return true;
 }
 
+//====================================================
+// Get/Set Client Money.
+//====================================================
 int GetClientMoney(int client)
 {
     return GetEntProp(client, Prop_Send, "m_iAccount");
 }
-
 void SetClientMoney(int client, int money)
 {
     SetEntProp(client, Prop_Send, "m_iAccount", money);
 }
 
 //====================================================
-// Bots Action.
+// Event Bots Action.
 //====================================================
 public void EvBotsAction(Event event, const char[] name, bool dontBroadcast)
 {
     int attacker = GetClientOfUserId(event.GetInt("attacker"));
+    
+    // Is Bot.
     if (IsFakeClient(attacker))
     {    
         int maxMoney = gCvars.MaxMoney.IntValue;
@@ -424,21 +501,34 @@ public void EvBotsAction(Event event, const char[] name, bool dontBroadcast)
                     target     = i;
                 }
             }
+            
+            // Transfer money.
             if (IsValidClient(target))
                 TransferMoney(attacker, target, botGive, true);
         }
     }
 }
 
+//====================================================
+// Bank System
+// Event Round End.
+//====================================================
 public void EvRoundEnd(Event event, const char[] name, bool dontBroadcast)
 {
 	int reasonId = event.GetInt("reason");
 	if (reasonId == ROUND_GAME_COMMENCING || reasonId == ROUND_DRAW)
+	{
 		gCommaning = true;
+//		PrintToServer("[TEST] Round Commencing.");
+	}
 	else
 		gCommaning = false;
 }
 
+//====================================================
+// Bank System
+// Commencing Spawn.
+//====================================================
 public void EvPlayerSpawn(Event event, const char[] name, bool dontBroadcast)
 {
 	int client = GetClientOfUserId(event.GetInt("userid"));
@@ -462,12 +552,16 @@ void CmdMoneyTransfer(int client, char target[MAX_NAME_LENGTH], int money)
         return;
     }
  
+    // Get Target Client.
     int player = FindTarget(client, target, false, false);
     if (IsValidClient(player))
     {
+    	// Check Team.
         if (!gCvars.Enemies.IntValue)
             if (GetClientTeam(player) != GetClientTeam(client))
                 return;
+
+        // Transfer.
         TransferMoney(client, player, money);
     }
 } 
@@ -502,9 +596,10 @@ void TransferMoney(int from, int to, int value, bool fromBot = false)
         tMoney += value;
     }
 
-    if (IsClientInGame(from))
+	// Transfer.
+    if (IsValidClient(from))
         SetClientMoney(from,fMoney);
-    if (IsClientInGame(to))
+    if (IsValidClient(to))
         SetClientMoney(to,  tMoney);
 
     if (!fromBot)
@@ -513,6 +608,9 @@ void TransferMoney(int from, int to, int value, bool fromBot = false)
     PrintToChat(to, "\4%s \1$%d was give from \3\"%N\".",     CHAT_TAG, value, from);
 }
 
+//====================================================
+// Check Valid Client.
+//====================================================
 bool IsValidClient(int client, bool replaycheck = true)
 {
     if(client <= 0 || client > MaxClients)
@@ -530,4 +628,23 @@ bool IsValidClient(int client, bool replaycheck = true)
             return false;
     }
     return true;
-} 
+}
+
+//====================================================
+// Change Cvar Maxmoney.
+//====================================================
+public void MaxMoneyChange(ConVar convar, const char[] oldValue, const char[] newValue)
+{
+	PatchMoney();
+}
+
+//====================================================
+// Memory Patch.
+//====================================================
+void PatchMoney()
+{	
+	int money = gCvars.MaxMoney.IntValue;
+	
+	for(int i = 0; i < gMaxMoneyMatches; i++)
+		StoreToAddress(gMaxMoney[i], money, NumberType_Int32);
+}
